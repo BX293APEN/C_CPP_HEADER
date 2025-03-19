@@ -52,6 +52,7 @@
         #include <dlfcn.h>
 
     #elif _WIN32
+        #include <WinSock2.h>
         #include <Windows.h>
         #include <tchar.h>
         #include <winbase.h>
@@ -59,7 +60,6 @@
         #include <winnt.h>
         #include <commdlg.h>
         #include <shlobj.h>
-        #include <WinSock2.h>
         #include <windowsx.h>
         #include <wininet.h>
         #include <ws2tcpip.h>
@@ -326,7 +326,55 @@
             HWND            hwnd;
             UINT            id;
         };
-        TaskTray _taskTray;
+        struct TaskTray _taskTray;
+        LRESULT CALLBACK _tray_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+            switch (msg) {
+                case WM_CLOSE:
+                    DestroyWindow(hwnd);
+                    return 0;
+                case WM_DESTROY:
+                    PostQuitMessage(0);
+                    return 0;
+                case WM_TRAY_CALLBACK_MESSAGE:
+                    switch (lparam){
+                        case WM_LBUTTONUP:
+                        case WM_RBUTTONUP:
+                            POINT p;
+                            GetCursorPos(&p);
+                            SetForegroundWindow(hwnd);
+                            WORD cmd = TrackPopupMenu(
+                                trayMenuItem, TPM_LEFTALIGN | 
+                                TPM_RIGHTBUTTON | 
+                                TPM_RETURNCMD | 
+                                TPM_NONOTIFY,
+                                p.x, 
+                                p.y, 
+                                0, 
+                                hwnd, 
+                                NULL
+                            );
+                            SendMessage(hwnd, WM_COMMAND, cmd, 0);
+                            return 0;
+                    }
+                    break;
+                case WM_COMMAND:
+                    if (wparam >= ID_TRAY_FIRST) {
+                        MENUITEMINFO item = {
+                            .cbSize = sizeof(MENUITEMINFO), .fMask = MIIM_ID | MIIM_DATA,
+                        };
+                        if (GetMenuItemInfo(trayMenuItem, wparam, FALSE, &item)) {
+                            struct tray_menu *menu = (struct tray_menu *)item.dwItemData;
+                            if (menu != NULL && menu->cb != NULL) {
+                                menu->cb(menu);
+                            }
+                        }
+                        return 0;
+                    }
+                    break;
+            }
+            return DefWindowProc(hwnd, msg, wparam, lparam);
+        }
+
         HMENU _tray_menu(struct tray_menu *m) {
             HMENU hMenu = CreatePopupMenu();
             for (; m != NULL && m->text != NULL; m++, (_taskTray.id)++) {
@@ -383,19 +431,19 @@
                 DestroyIcon(_taskTray.nid.hIcon);
             }
             _taskTray.nid.hIcon = icon;
-            Shell_NotifyIcon(NIM_MODIFY, &nid);
+            Shell_NotifyIcon(NIM_MODIFY, &_taskTray.nid);
             if (prevmenu != NULL) {
                 DestroyMenu(prevmenu);
             }
         }
-        TaskTray(std::string menuName) {
+        void tray_init(char *menuName) {
             _taskTray.id = ID_TRAY_FIRST;
             memset(&_taskTray.wc, 0, sizeof(_taskTray.wc));
             _taskTray.wc.cbSize = sizeof(WNDCLASSEX);
             _taskTray.wc.lpfnWndProc = (WNDPROC)_tray_wnd_proc;
             _taskTray.wc.hInstance = GetModuleHandle(NULL);
             _taskTray.wc.lpszClassName = WC_TRAY_CLASS_NAME;
-            _taskTray.wc.lpszMenuName = menuName.c_str();
+            _taskTray.wc.lpszMenuName = menuName;
             if (!RegisterClassEx(&_taskTray.wc)) {
                 return;
             }
@@ -410,7 +458,7 @@
             _taskTray.nid.uID = 0;
             _taskTray.nid.uFlags = NIF_ICON | NIF_MESSAGE;
             _taskTray.nid.uCallbackMessage = WM_TRAY_CALLBACK_MESSAGE;
-            lstrcpy( _taskTray.nid.szTip, TEXT(menuName.c_str())); 
+            lstrcpy( _taskTray.nid.szTip, TEXT(menuName)); 
             Shell_NotifyIcon(NIM_ADD, &_taskTray.nid);
             return;
         }
@@ -425,53 +473,7 @@
             PostQuitMessage(0);
             UnregisterClass(WC_TRAY_CLASS_NAME, GetModuleHandle(NULL));
         }
-        LRESULT CALLBACK _tray_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
-            switch (msg) {
-                case WM_CLOSE:
-                    DestroyWindow(hwnd);
-                    return 0;
-                case WM_DESTROY:
-                    PostQuitMessage(0);
-                    return 0;
-                case WM_TRAY_CALLBACK_MESSAGE:
-                    switch (lparam){
-                        case WM_LBUTTONUP:
-                        case WM_RBUTTONUP:
-                            POINT p;
-                            GetCursorPos(&p);
-                            SetForegroundWindow(hwnd);
-                            WORD cmd = TrackPopupMenu(
-                                trayMenuItem, TPM_LEFTALIGN | 
-                                TPM_RIGHTBUTTON | 
-                                TPM_RETURNCMD | 
-                                TPM_NONOTIFY,
-                                p.x, 
-                                p.y, 
-                                0, 
-                                hwnd, 
-                                NULL
-                            );
-                            SendMessage(hwnd, WM_COMMAND, cmd, 0);
-                            return 0;
-                    }
-                    break;
-                case WM_COMMAND:
-                    if (wparam >= ID_TRAY_FIRST) {
-                        MENUITEMINFO item = {
-                            .cbSize = sizeof(MENUITEMINFO), .fMask = MIIM_ID | MIIM_DATA,
-                        };
-                        if (GetMenuItemInfo(trayMenuItem, wparam, FALSE, &item)) {
-                            struct tray_menu *menu = (struct tray_menu *)item.dwItemData;
-                            if (menu != NULL && menu->cb != NULL) {
-                                menu->cb(menu);
-                            }
-                        }
-                        return 0;
-                    }
-                    break;
-            }
-            return DefWindowProc(hwnd, msg, wparam, lparam);
-        }
+        
         // プロセスハンドルから特権名を有効/無効
         BOOL SetProcessPrivilege(HANDLE hProcess, LPCTSTR lpPrivilegeName, BOOL bEnable) {
             HANDLE hToken;
@@ -497,7 +499,7 @@
             return result;
         }
 
-        int shutdown(char op[256],int second){
+        int shutdown_option_select(char* op,int second){
             int uFlag;
             if (strcmp(op,"logoff")==0){
                 uFlag = EWX_LOGOFF;
@@ -511,7 +513,7 @@
             else{
                 return -1;
             }
-            sleep(second);
+            Sleep(second);
 
             // ログオフ/シャットダウン/再起動を実行する
             if (SetProcessPrivilege(GetCurrentProcess(), SE_SHUTDOWN_NAME, TRUE)) {
