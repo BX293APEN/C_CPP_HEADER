@@ -37,7 +37,7 @@ ifeq ($(OSENV), Windows)
 else ifeq ($(OSENV), Linux)
 	CPPMODULE_EXIST := $(shell ls | grep ${CPPMODULE})
 	CMODULE_EXIST   := $(shell ls | grep ${CMODULE})
-	RC_EXIST        := $(shell dir /b | findstr ${RC})
+	RC_EXIST        := $(shell ls | grep ${RC})
 endif
 
 run:
